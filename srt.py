@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from __future__ import unicode_literals, print_function
 import os
 import re
 from dundergifflin.util import Timestamp
@@ -23,7 +24,7 @@ class Subtitles(object):
   """
   def __init__(self, srt_filename):
     self.subtitles = []
-    lines = [line.strip() for line in open(srt_filename, "r").readlines()]
+    lines = [line.strip().decode("UTF-8") for line in open(srt_filename, "r").readlines()]
     i = 0
     while i < len(lines):
       index = int(lines[i])
