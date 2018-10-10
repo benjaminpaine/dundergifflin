@@ -5,6 +5,8 @@ import logging
 import sys
 import hashlib
 import six
+import os
+import errno
 
 try:
   from urllib import urlencode
@@ -188,3 +190,17 @@ def url_encode(**kwargs):
     The URL-encoded string of all kwargs.
   """
   return urlencode(kwargs)
+
+def process_is_alive(pid):
+  try:
+    os.kill(int(pid), 0)
+  except OSError as err:
+    if err.errno == errno.EPERM:
+      return True
+    elif err.errno == errno.ESRCH:
+      return False
+    else:
+      raise
+  except ValueError:
+    return False
+  return True

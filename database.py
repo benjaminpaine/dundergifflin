@@ -423,6 +423,7 @@ class DunderDatabase(Database):
       FROM kv_store
       WHERE key = %s
       """, (key,)
+    )
     row = cursor.fetchone()
     if not row:
       return [None, None, None]
