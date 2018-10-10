@@ -3,8 +3,11 @@
 
 from distutils.core import setup
 
-setup(
+setup (
   name="DunderGifflin",
   version="0.1.0",
-  packages=[
+  packages=["dundergifflin"],
+  license="GPLV3",
+  long_description=open("README", "r").read(),
+  install_requires=["praw", "psycopg2", "six", "importlib"]
 )
