@@ -29,7 +29,7 @@ if not os.path.isdir(configuration_directory):
   sys.stderr.flush()
   sys.exit(5)
 
-configuration_file = os.path.join(configuration_directory, "office_config")
+configuration_file = os.path.join(configuration_directory, "office_test_config")
 if not os.path.exists(configuration_file):
   sys.stderr.write("Configuration file does not exist at {0}, exiting.\n".format(configuration_file))
   sys.stderr.flush()
@@ -148,6 +148,47 @@ def main(conn = None, logger = None):
 
         database.upsert_key("imgur_refresh_token", imgur.refresh_token)
 
+        def find_filter_subtitles(check_text, minimum_likeness = 0.8):
+          logger.info("Checking for text '{0}'".format(check_text))
+          found_subtitles = database.find_subtitles(check_text)
+          for match in body_search_regex.findall(check_text):
+            logger.info("Checking for text '{0}'".format(match))
+            found_subtitles.extend(database.find_subtitles(match))
+          arr = [
+            found_subtitle
+            for found_subtitle in found_subtitles
+            if found_subtitle[7] >= minimum_likeness
+            and (found_subtitle[9] is None or found_subtitle[9] > configuration.REDDIT_IGNORE_THRESHOLD)
+          ]
+          logger.info("Sorting array {0}".format(arr))
+          arr.sort(key = lambda f: f[7])
+          arr.reverse()
+          logger.info("Returning array {0}".format(arr))
+          return arr
+
+        def convert_upload(comment, season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score):
+          file_path = "s{0:02d}_e{1:02d}_l{2:d}_l{2:d}.gif".format(season, episode, start_index, end_index)
+
+          OfficeConverter(
+            season, 
+            episode, 
+            file_path,
+            Timestamp.from_string(str(start_time)), 
+            Timestamp.from_string(str(end_time)), 
+            text
+          ).execute()
+
+          url = imgur.upload(
+            file_path,
+            "The Office, Season {0:02d}, Episode {1:02d}".format(season, episode),
+            comment.permalink
+          )
+
+          os.remove(file_path)
+
+          return url
+
+
         def comment_function(comment):
           if conn is not None:
             conn.send("comment_evaluated")
@@ -172,95 +213,46 @@ def main(conn = None, logger = None):
                 )
               return
 
-            logger.debug("Checking for text '{0}'.".format(body))
-            check_text = body
-            subtitles = database.find_subtitles(check_text)
+            subtitles = find_filter_subtitles(body, 0.0 if force else configuration.REDDIT_MINIMUM_LIKENESS)
             if not subtitles:
-              logger.debug("Nothing found, looking for quotes.")
-              # Search for text within quotations.
-              for match in body_search_regex.findall(body):
-                check_text = match
-                subtitles = database.find_subtitles(check_text)
-                if subtitles:
-                  break
-            if subtitles:
-              for season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score in subtitles:
-                text = text.decode("utf-8")
-                if force or (likeness > configuration.REDDIT_MINIMUM_LIKENESS):
-                  if not force and (comment_score is not None and comment_score < configuration.REDDIT_IGNORE_THRESHOLD):
-                    logger.debug("Skipping season {0}, episode {1}, line {2}-{3} due to ignore threshold.".format(
-                      season,
-                      episode,
-                      start_index,
-                      end_index
-                    ))
-                    continue
-                  logger.debug("Text: {0}\nLikeness:{1}\nSeason {2}\nEpisode {3}\nMentions {4}\nScore {5}\n{6} --> {7}\n{8}".format(
-                    check_text,
-                    likeness,
-                    season,
-                    episode,
-                    comment_count,
-                    comment_score,
-                    Timestamp.from_string(str(start_time)),
-                    Timestamp.from_string(str(end_time)),
-                    text
-                  ))
+              if force:
+                return "Sorry{0}, I couldn't find any quotes with that phrase.".format(
+                  " /u/{0}".format(author.name) if author is not None else ""
+                )
+            else:
+              season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score = subtitles[0]
+              text = text.decode("utf-8")
+              logger.info("Found subtitle S{0:02d}E{1:02d} \"{2:s}\", uploading.".format(season, episode, text))
 
-                  file_path = "s{0:02d}_e{1:02d}_l{2:d}_l{2:d}.gif".format(season, episode, start_index, end_index)
+              url = convert_upload(comment, season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score)
 
-                  OfficeConverter(
-                    season, 
-                    episode, 
-                    file_path,
-                    Timestamp.from_string(str(start_time)), 
-                    Timestamp.from_string(str(end_time)), 
-                    text
-                  ).execute()
+              if author is not None:
+                logger.debug("Incrementing uses for author '{0}'.".format(author.name))
+                database.increment_user_uses(author.name)
+                uses = database.get_user_uses(author.name)
+              else:
+                uses = None
 
-                  url = imgur.upload(
-                    file_path,
-                    "The Office, Season {0:02d}, Episode {1:02d}".format(season, episode),
-                    comment.permalink
-                  )
+              if conn is not None:
+                conn.send("comment_made")
 
-                  os.remove(file_path)
-
-                  if author is not None:
-                    logger.debug("Incrementing uses for author '{0}'.".format(author.name))
-                    database.increment_user_uses(author.name)
-                    uses = database.get_user_uses(author.name)
-                  else:
-                    uses = None
-                  if conn is not None:
-                    conn.send("comment_made")
-                  return format_comment(
-                    url, 
-                    text, 
-                    season, 
-                    episode, 
-                    start_index,
-                    end_index,
-                    comment_count,
-                    comment_score,
-                    uses,
-                    likeness,
-                    configuration.REDDIT_MINIMUM_LIKENESS, 
-                    configuration.REDDIT_USERNAME
-                  )
-                else:
-                  logger.debug("Found likeness {0} for string '{1}' ('{2}'), but does not exceed minimum likeness.".format(
-                    likeness,
-                    check_text,
-                    text
-                  ))
-                  return
-            elif force:
-              return "Sorry{0}, I couldn't find any quotes with that phrase.".format(
-                " /u/{0}".format(author.name) if author is not None else ""
+              return format_comment(
+                url, 
+                text, 
+                season, 
+                episode, 
+                start_index,
+                end_index,
+                comment_count,
+                comment_score,
+                uses,
+                likeness,
+                configuration.REDDIT_MINIMUM_LIKENESS, 
+                configuration.REDDIT_USERNAME
               )
+
           except Exception as ex:
-            alerter.sent("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
+            alerter.send("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
               type(ex).__name__,
               str(ex),
               traceback.format_exc(ex)
