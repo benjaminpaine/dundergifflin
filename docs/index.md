@@ -1,5 +1,6 @@
-# dundergifflin
-A python library for subtitle-based GIF-generating reddit bots
+## Module Documentation
+
+- [dundergifflin.monitor](dundergifflin.monitor.md)
 
 ## Getting Started
 
