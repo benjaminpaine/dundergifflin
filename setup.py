@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
-from distutils.core import setup
+from setuptools import setup
 
 setup (
-  name="DunderGifflin",
+  name="dundergifflin",
   version="0.1.0",
   packages=["dundergifflin"],
   license="GPLV3",
-  long_description=open("README", "r").read(),
-  install_requires=["praw", "psycopg2", "six", "importlib"]
+  long_description=open("README.md", "r").read(),
+  install_requires=["praw", "psycopg2", "six", "importlib"],
+  entry_points = {
+    "console_scripts": ["dundergifflin = dundergifflin.cmd:main"]
+  }
 )

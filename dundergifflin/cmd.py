@@ -16,6 +16,9 @@ from dundergifflin.monitor import BotMonitor
 from dundergifflin.color import Color
 
 def color_success(msg):
+  """
+  Returns a message colored green.
+  """
   return Color.color_string(
     Color.ATTRIBUTE_BRIGHT,
     Color.COLOR_GREEN,
@@ -23,6 +26,9 @@ def color_success(msg):
   )
 
 def color_failure(msg):
+  """
+  Returns a message colored red.
+  """
   return Color.color_string(
     Color.ATTRIBUTE_BRIGHT,
     Color.COLOR_RED,
@@ -30,6 +36,9 @@ def color_failure(msg):
   )
 
 def color_warn(msg):
+  """
+  Returns a message colored yellow.
+  """
   return Color.color_string(
     Color.ATTRIBUTE_BRIGHT,
     Color.COLOR_YELLOW,
@@ -37,6 +46,9 @@ def color_warn(msg):
   )
 
 def color_info(msg):
+  """
+  Returns a message colored cyan.
+  """
   return Color.color_string(
     Color.ATTRIBUTE_BRIGHT,
     Color.COLOR_CYAN,
@@ -44,6 +56,10 @@ def color_info(msg):
   )
 
 class MessageSender(threading.Thread):
+  """
+  A small thread that will send a message over a socket,
+  and timeout if one is passed.
+  """
   def __init__(self, configuration_file, *message):
     super(MessageSender, self).__init__()
     self._received = threading.Event()
@@ -70,6 +86,9 @@ class MessageSender(threading.Thread):
     self._received.set()
 
 def send_message(configuration_file, timeout, *message):
+  """
+  Uses the MessageSender to send a message to a TCP socket.
+  """
   sender = MessageSender(configuration_file, *message)
   start = datetime.datetime.now()
   sender.start()
@@ -82,6 +101,9 @@ def send_message(configuration_file, timeout, *message):
     return sender.data
 
 def monitor_running(configuration_file):
+  """
+  Return whether or not the monitor is running.
+  """
   configuration = Configuration(configuration_file)
   if not os.path.exists(configuration.PIDFILE):
     return False
@@ -92,10 +114,16 @@ def monitor_running(configuration_file):
     return False
 
 def start_monitor(configuration_file):
+  """
+  Starts the monitor.
+  """
   bot_monitor = BotMonitor(configuration_file)
   bot_monitor.start()
 
 def start(args):
+  """
+  Start the monitor, then start a bot.
+  """
   if not args.script:
     if monitor_running(args.config):
       print(color_warn("No script provided, monitor already running."))
@@ -114,6 +142,9 @@ def start(args):
       print(color_warn("Timed out waiting for response."))
 
 def stop(args):
+  """
+  Stop a bot.
+  """
   if not monitor_running(args.config):
     print(color_error("Bot monitor not running."))
   else:
@@ -124,6 +155,9 @@ def stop(args):
       print(color_warn("Timed out waiting for response."))
 
 def status(args):
+  """
+  Return the status of the monitor and all bots.
+  """
   response_lines = []
   if monitor_running(args.config):
     response_lines += ["process monitor: {0}".format(color_success("running"))]
@@ -158,6 +192,9 @@ def status(args):
   print("\n".join(response_lines))
 
 def restart(args):
+  """
+  Restart a bot.
+  """
   if not monitor_running(args.config):
     print(color_error("Bot monitor not running."))
   else:
@@ -168,6 +205,9 @@ def restart(args):
       print(color_warn("Timed out waiting for response."))
 
 def destroy(args):
+  """
+  Destroy a bot.
+  """
   if not monitor_running(args.config):
     print(color_error("Bot monitor not running."))
   else:
@@ -178,6 +218,9 @@ def destroy(args):
       print(color_warn("Timed out waiting for response."))
 
 def shutdown(args):
+  """
+  Shutdown all bots and the monitor.
+  """
   if not monitor_running(args.config):
     print(color_error("Bot monitor not running."))
   else:
