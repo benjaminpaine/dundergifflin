@@ -1,5 +1,15 @@
 ## Module Documentation
 
+- [dundergifflin](dundergifflin.md)
+- [dundergifflin.util](dundergifflin.util.md)
+- [dundergifflin.database](dundergifflin.database.md)
+- [dundergifflin.imgur](dundergifflin.imgure.md)
+- [dundergifflin.reddit](dundergifflin.reddit.md)
+- [dundergifflin.ffmpeg](dundergifflin.ffmpeg.md)
+- [dundergifflin.srt](dundergifflin.srt.md)
+- [dundergifflin.color](dundergifflin.color.md)
+- [dundergifflin.smtp_alert](dundergifflin.smtp_alert.md)
+- [dundergifflin.config](dundergifflin.config.md)
 - [dundergifflin.monitor](dundergifflin.monitor.md)
 
 ## Getting Started
