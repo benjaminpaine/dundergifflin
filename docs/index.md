@@ -130,7 +130,7 @@ AUTOSTART=/path/to/my/file
 
 # Examples
 
-See [the main dundergifflin bot's](../impl/office.py) implementation for an example.
+See [the main dundergifflin bot's](https://github.com/benjaminpaine/dundergifflin/blob/master/impl/office.py) implementation for an example.
 
 # Contributing
 Please read CONTRIBUTING.md for details on our code of conduct, and the process for submitting pull requests to us.
