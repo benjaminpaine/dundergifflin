@@ -231,7 +231,7 @@ def shutdown(args):
       if (datetime.datetime.now() - start).total_seconds() > 5:
         print(color_warn("Monitor did not shut down, sending SIGKILL."))
         configuration = Configuration(args.config)
-        os.kill(signal.SIGKILL, configuration.PIDFILE)
+        os.kill(signal.SIGKILL, int(open(configuration.PIDFILE, "r").read()))
         return
     print(color_success("Bot monitor stopped."))
         
