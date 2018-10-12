@@ -29,4 +29,9 @@ class Configuration(object):
         value = True
       elif value.lower() == "false":
         value = False
-      setattr(self, key, value)
+      if hasattr(self, key):
+        if type(getattr(self, key)) is not list:
+          setattr(self, key [getattr(self, key)])
+        setattr(self, key, getattr(self, key) + [value])
+      else:
+        setattr(self, key, value)

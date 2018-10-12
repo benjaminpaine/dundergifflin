@@ -5,15 +5,12 @@ import sys
 import os
 import itertools
 import re
-import logging
-import logging.handlers
 import time
 import traceback
-
-sys.path.insert(1, os.path.join(os.path.abspath(os.path.dirname(__file__)), "../../"))
-
 import dundergifflin
-from dundergifflin.ffmpeg import Converter
+import logging
+
+from dundergifflin.ffmpeg import SubtitleConverter
 from dundergifflin.config import Configuration
 from dundergifflin.util import Timestamp, logger
 from dundergifflin.database import DunderDatabase
@@ -22,23 +19,38 @@ from dundergifflin.imgur import Imgur
 from dundergifflin.smtp_alert import SMTPAlert
 
 body_search_regex = re.compile(r"[«‹»›„‚“‟‘‛”’\"❛❜❟❝❞❮❯⹂〝〞〟＂<>\[\]](.*?)[«‹»›„‚“‟‘‛”’\"❛❜❟❝❞❮❯⹂〝〞〟＂<>\[\]]")
-comment_search_regex = re.compile(r".*?Season.*?(?P<season>\d+).*?Episode.*?(?P<episode>\d+).*?Line.*?(?P<line>\d+).*?")
+comment_search_regex_1 = re.compile(r".*?Season.*?(?P<season>\d+).*?Episode.*?(?P<episode>\d+).*?Line.*?(?P<line>\d+).*?")
+comment_search_regex_2 = re.compile(r".*?Season.*?(?P<season>\d+).*?Episode.*?(?P<episode>\d+).*?Lines.*?(?P<line_1>\d+)-(?P<line_2>\d+).*?")
 
-logger.addHandler(logging.handlers.SysLogHandler(facility = "local0"))
-logger.setLevel(logging.DEBUG)
-
-configuration_directory = os.path.join(os.path.expanduser("~"), ".dundergifflin")
+configuration_directory = os.path.join(os.path.expanduser("~"), "dundergifflin")
 
 if not os.path.isdir(configuration_directory):
   sys.stderr.write("Configuration directory does not exist at {0}, exiting.\n".format(configuration_directory))
   sys.stderr.flush()
   sys.exit(5)
 
-configuration_file = os.path.join(configuration_directory, "config")
+configuration_file = os.path.join(configuration_directory, "office_config")
 if not os.path.exists(configuration_file):
   sys.stderr.write("Configuration file does not exist at {0}, exiting.\n".format(configuration_file))
   sys.stderr.flush()
   sys.exit(5)
+
+class OfficeConverter(SubtitleConverter):
+  def __init__(self, season, episode, output_file, start, end, text):
+    super(OfficeConverter, self).__init__(
+      os.path.join(configuration_directory, "media", "office", "S{0:02d}".format(season), "E{0:02d}.mkv".format(episode)),
+      output_file,
+      True,
+      start,
+      end,
+      text,
+      configuration.IMAGE_WIDTH,
+      configuration.TEXT_FONT,
+      configuration.TEXT_COLOR,
+      configuration.TEXT_SIZE_MAX,
+      configuration.TEXT_OFFSET,
+      configuration.TEXT_STROKE_WIDTH
+    )
 
 class OfficeConfiguration(Configuration):
   REQUIRED_KEYS = [
@@ -48,6 +60,8 @@ class OfficeConfiguration(Configuration):
     "TEXT_SIZE_MAX",
     "TEXT_COLOR",
     "TEXT_OFFSET",
+    "DATABASE_HOST",
+    "DATABASE_PORT",
     "DATABASE_NAME",
     "DATABASE_USER",
     "DATABASE_PASSWORD",
@@ -67,45 +81,10 @@ class OfficeConfiguration(Configuration):
     
 configuration = OfficeConfiguration(configuration_file)
 
-class OfficeConverter(Converter):
-  def __init__(self, season, episode, output_file, start, end, text):
-    input_file = os.path.join(configuration_directory, "media", "office", "S{0:02d}".format(season), "E{0:02d}.mkv".format(episode))
-    if not os.path.exists(input_file):
-      raise Exception("Could not find Season {0}, Episode {1} at {2}. Exiting.".format(season, episode))
-    super(OfficeConverter, self).__init__(input_file, output_file)
-
-    self.add_input_flag("-ss", start)
-    self.add_output_flag("-t", (end-start).total_seconds())
-    self.add_filter(scale = "{0}:-1".format(configuration.IMAGE_WIDTH))
-
-    text_size = int(configuration.TEXT_SIZE_MAX-len(text)/5)
-
-    for line_offset, text_line in enumerate(reversed(text.splitlines())):
-      text_offset = int(configuration.TEXT_OFFSET) + (line_offset * text_size)
-      for shadowx, shadowy in itertools.product(
-        list(
-          range(
-            -1 * configuration.TEXT_STROKE_WIDTH, 
-            configuration.TEXT_STROKE_WIDTH
-          )
-        ), 
-        repeat=2
-      ):
-        self.add_filter(drawtext = {
-          "fontfile": configuration.TEXT_FONT,
-          "text": text_line.strip().replace("'", "`"),
-          "x": "(w-text_w)/2",
-          "y": "(h-text_h-{0})".format(text_offset),
-          "fontsize": int(configuration.TEXT_SIZE_MAX-len(text)/5),
-          "fontcolor": configuration.TEXT_COLOR,
-          "shadowx": shadowx,
-          "shadowy": shadowy
-        })
-
-def format_comment(url, text, season, episode, index, comment_count, comment_score, uses, likeness, minimum_likeness, username):
+def format_comment(url, text, season, episode, start_index, end_index, comment_count, comment_score, uses, likeness, minimum_likeness, username):
   return """>[{0:s}]({1:s})
 
->Season {2:02d}, Episode {3:02d}, Line {4:d}
+>Season {2:02d}, Episode {3:02d}, Line{4:s}
 
 I'm a bot that parses comments for quotes from The Office. I found your comment to contain a quote {5:d}% like this. This quote has been mentioned {6:d} times{7:s}.{8:s}
 
@@ -120,7 +99,7 @@ I'm a bot that parses comments for quotes from The Office. I found your comment 
     url,
     season,
     episode,
-    index + 1,
+    " {0:d}".format(start_index+1) if start_index == end_index else "s {0:d}-{1:d}".format(start_index+1, end_index+1),
     int(likeness*100),
     comment_count,
     ", and has an average score of {0:.2f}".format(comment_score) if comment_score is not None else "",
@@ -132,7 +111,12 @@ I'm a bot that parses comments for quotes from The Office. I found your comment 
     username
   )
 
-def main():
+def main(conn = None, logger = None):
+  if logger is None:
+    logger = logging.getLogger("dunder-gifflin")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler(sys.stdout))
+
   alerter = SMTPAlert(
     configuration.EMAIL_ALERT_HOST,
     configuration.EMAIL_ALERT_PORT,
@@ -140,12 +124,16 @@ def main():
     configuration.EMAIL_ALERT_PASSWORD,
     configuration.EMAIL_ALERT_USE_TLS
   )
+
   try:
     with DunderDatabase(
+      configuration.DATABASE_HOST,
+      configuration.DATABASE_PORT,
       configuration.DATABASE_NAME,
       configuration.DATABASE_USER,
       configuration.DATABASE_PASSWORD,
-      os.path.join(configuration_directory, "media", "office")
+      os.path.join(configuration_directory, "media", "office"),
+      configuration.DATABASE_CONCATENATION_DEPTH
     ) as database:
 
       with Imgur(
@@ -155,8 +143,13 @@ def main():
         configuration.IMGUR_AUTHORIZATION_LISTEN_PORT,
         database.get_key("imgur_refresh_token")[0]
       ) as imgur:
+
         database.upsert_key("imgur_refresh_token", imgur.refresh_token)
+
         def comment_function(comment):
+          if conn is not None:
+            conn.send("comment_evaluated")
+
           try:
             body = comment.body.strip()
             author = comment.author
@@ -165,8 +158,10 @@ def main():
                 logger.info("Ignoring post from user '{0}'.".format(author.name))
                 return
             force = body.startswith("!{0}".format(configuration.REDDIT_USERNAME)) or body.startswith("!{0}".format(configuration.REDDIT_USERNAME.replace("_","\\_")))
+
             if force:
               body = body[len(configuration.REDDIT_USERNAME.replace("_", "\\_"))+1:].strip()
+
             if len(body) < configuration.REDDIT_MINIMUM_LENGTH:
               logger.info("Ignoring text body '{0}': too short.".format(body))
               if force:
@@ -174,6 +169,7 @@ def main():
                   " /u/{0}".format(author.name) if author is not None else ""
                 )
               return
+
             logger.debug("Checking for text '{0}'.".format(body))
             check_text = body
             subtitles = database.find_subtitles(check_text)
@@ -186,17 +182,18 @@ def main():
                 if subtitles:
                   break
             if subtitles:
-              for season, episode, index, start_time, end_time, text, likeness, comment_count, comment_score in subtitles:
+              for season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score in subtitles:
                 text = text.decode("utf-8")
                 if force or (likeness > configuration.REDDIT_MINIMUM_LIKENESS):
                   if not force and (comment_score is not None and comment_score < configuration.REDDIT_IGNORE_THRESHOLD):
-                    logger.info("Skipping season {0}, episode {1}, line {2} due to ignore threshold.".format(
+                    logger.debug("Skipping season {0}, episode {1}, line {2}-{3} due to ignore threshold.".format(
                       season,
                       episode,
-                      index
+                      start_index,
+                      end_index
                     ))
                     continue
-                  logger.info("Text: {0}\nLikeness:{1}\nSeason {2}\nEpisode {3}\nMentions {4}\nScore {5}\n{6} --> {7}\n{8}".format(
+                  logger.debug("Text: {0}\nLikeness:{1}\nSeason {2}\nEpisode {3}\nMentions {4}\nScore {5}\n{6} --> {7}\n{8}".format(
                     check_text,
                     likeness,
                     season,
@@ -208,7 +205,7 @@ def main():
                     text
                   ))
 
-                  file_path = "s{0:02d}_e{1:02d}_l{2:d}.gif".format(season, episode, index)
+                  file_path = "s{0:02d}_e{1:02d}_l{2:d}_l{2:d}.gif".format(season, episode, start_index, end_index)
 
                   OfficeConverter(
                     season, 
@@ -233,12 +230,15 @@ def main():
                     uses = database.get_user_uses(author.name)
                   else:
                     uses = None
+                  if conn is not None:
+                    conn.send("comment_made")
                   return format_comment(
                     url, 
                     text, 
                     season, 
                     episode, 
-                    index,
+                    start_index,
+                    end_index,
                     comment_count,
                     comment_score,
                     uses,
@@ -258,7 +258,7 @@ def main():
                 " /u/{0}".format(author.name) if author is not None else ""
               )
           except Exception as ex:
-            alerter.send("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
+            logger.error("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
               type(ex).__name__,
               str(ex),
               traceback.format_exc(ex)
@@ -266,22 +266,37 @@ def main():
             raise ex
 
         def vote_function(comment):
+          if conn is not None:
+            conn.send("vote_evaluated")
           if comment.body.strip().startswith("Sorry"):
             return
           for line in comment.body.splitlines():
-            m = comment_search_regex.search(line)
+            m = comment_search_regex_2.search(line)
+            if m:
+              season = int(m.group("season"))
+              episode = int(m.group("episode"))
+              line_1 = int(m.group("line_1")) - 1
+              line_2 = int(m.group("line_2")) - 1
+              logger.info("Upserting comment ID '{0}' into comment database. (season {1}, episode {2}, lines {3}-{4}, score {5})".format(comment, season, episode, line_1, line_2, comment.score))
+              database.upsert_comment(str(comment), comment.score, season, episode, line_1, line_2)
+              return
+            m = comment_search_regex_1.search(line)
             if m:
               season = int(m.group("season"))
               episode = int(m.group("episode"))
               line = int(m.group("line")) - 1
               logger.info("Upserting comment ID '{0}' into comment database. (season {1}, episode {2}, line {3}, score {4})".format(comment, season, episode, line, comment.score))
-              database.upsert_comment(str(comment), comment.score, season, episode, line)
+              database.upsert_comment(str(comment), comment.score, season, episode, line, line)
               return
           logger.error("Could not parse information from comment ID '{0}'. Body:\n{1}".format(comment, comment.body))
 
         def reply_function(comment):
+          if conn is not None:
+            conn.send("reply_evaluated")
           if comment.author is not None:
             if comment.body.lower().find("ignore me") != -1:
+              if conn is not None:
+                conn.send("user_ignored")
               logger.info("Ignoring user '{0}' by request.".format(comment.author.name))
               database.ignore_user(comment.author.name)
             
@@ -298,14 +313,15 @@ def main():
         ) as crawler:
           while True:
             time.sleep(60)
+
   except Exception as ex:
-    alerter.send("Receieved an exception during normal operation.\n\n{0}(): {1}\n\n{2}".format(
+    logger.error("Receieved an exception during normal operation.\n\n{0}(): {1}\n\n{2}".format(
       type(ex).__name__,
       str(ex),
       traceback.format_exc(ex)
     ))
   else:
-    alerter.send("Reddit bot has stopped!")
+    logger.error("Reddit bot has stopped!")
 
 if __name__ == "__main__":
-  sys.exit(main())
+  main()

@@ -11,6 +11,7 @@ import datetime
 import base64
 import os
 import json
+import traceback
 from dundergifflin.util import url_join, url_encode, logger
 from dundergifflin.exceptions import RequestException
 
@@ -90,7 +91,7 @@ class Imgur(object):
     self.refresh_token = refresh_token
 
   def __enter__(self):
-    self.authorize()
+    self._authorize()
     return self
 
   def __exit__(self, *args):
@@ -136,7 +137,7 @@ class Imgur(object):
     """
     if getattr(self, "refresh_token", None) is not None:
       try:
-        self.refresh()
+        self._refresh()
         return
       except Exception as ex:
         logger.error("Failed getting authorization using refresh token. Will open authentication address.\n{0}(): {1}\n{2}".format(

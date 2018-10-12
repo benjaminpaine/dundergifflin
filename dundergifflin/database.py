@@ -29,6 +29,8 @@ class Database(object):
     The password for said user.
   """
   def __init__(self, host, port, database_name, username, password):
+    self.host = host
+    self.port = port
     self.database_name = database_name
     self.username = username
     self.password = password
@@ -83,7 +85,7 @@ class Database(object):
     except:
       pass
 
-class DunderDatabase(Database):
+class SubtitleDatabase(Database):
   """
   A wrapper around a subtitle database.
 
@@ -119,6 +121,7 @@ class DunderDatabase(Database):
     This will multiply the storage required and lookup time of each episode by the number
     passed in.
   """
+  
   SUBTITLE_MIGRATION = """
   BEGIN;
 
@@ -142,6 +145,194 @@ class DunderDatabase(Database):
     md5sum VARCHAR NOT NULL,
     PRIMARY KEY (path)
   );
+
+  CREATE INDEX IF NOT EXISTS trigram_index ON subtitles USING GIST (subtitle gist_trgm_ops);
+
+  COMMIT;
+  """
+  def __init__(self, host, port, database_name, username, password, directory, concatenation_depth = 2):
+    super(SubtitleDatabase, self).__init__(host, port, database_name, username, password)
+    self.directory = directory
+    self.concatenation_depth = concatenation_depth
+    self._migrate()
+    self._crawl_subtitles()
+  
+  def find_subtitles(self, text, limit = 10):
+    """
+    Find the closest subtitles to a line of text.
+
+    Returns in descending order of likeness, where likeness is 1 minus the pg_trgrm operation "<->".
+    A likeness of 1 represents a 100% match (excluding punctuation and capitalization).
+
+    Parameters
+    ----------
+    text : string
+      The text to search for.
+    limit : int
+      The number of rows to return.
+
+    Returns
+    -------
+    list
+      season : int
+        The season this subtitle is from.
+      episode : int
+        The episode this subtitle is from.
+      start_index : int
+        The starting index of the line.
+      end_index : int
+        The ending index of the line.
+      start_time : string
+        The start time of the line, in the form HH:MM:SS.ff
+      end_time : string
+        The end time of the line, in the form HH:MM:SS.ff
+      subtitle : string
+        The actual subtitle, including punctuation.
+      likeness : float
+        The likeness of this line, between 1 (~exact match) and 0 (no match).
+    
+    """
+    cursor = self.get_connection().cursor()
+    cursor.execute(
+      """
+      SELECT subtitles.season, 
+             subtitles.episode, 
+             subtitles.start_index, 
+             subtitles.end_index,
+             subtitles.start_time,
+             subtitles.end_time,
+             subtitles.subtitle,
+             (1 - (subtitles.subtitle <-> %s)) AS likeness,
+      FROM subtitles
+      WHERE subtitles.subtitle %% %s 
+      ORDER BY subtitles.subtitle <-> %s ASC
+      LIMIT {0}
+      """.format(limit), (text, text, text)
+    )
+    return cursor.fetchall()
+  
+  def _migrate(self):
+    """
+    Runs the default migration against the database. Checked on instantiation.
+    """
+    cursor = self.get_connection().cursor()
+    cursor.execute(SubtitleDatabase.SUBTITLE_MIGRATION)
+    self.get_connection().commit()
+    self.get_connection().close()
+
+  def _crawl_subtitles(self):
+    """
+    Crawl through the directory for subtitles and update the database accordingly. Called on instantiation.
+    """
+    cursor = self.get_connection().cursor()
+    for season in os.listdir(self.directory):
+      if season.lower().startswith("s") and os.path.isdir(os.path.join(self.directory, season)):
+        season_directory = os.path.join(self.directory, season)
+        try:
+          season_number = int(re.sub(r"\D", "", season))
+          for filename in os.listdir(season_directory):
+            if filename.endswith(".srt") and filename.lower().startswith("e"):
+              subtitle_path = os.path.join(season_directory, filename)
+              try:
+                md5 = md5sum(subtitle_path)
+                episode_number = int(re.sub(r"\D", "", filename))
+                cursor.execute("SELECT md5sum FROM srt WHERE path = %s", (subtitle_path,))
+                row = cursor.fetchone()
+                if not row or row[0] != md5:
+                  logger.info("New or changed subtitle file '{0}' found (season {1}, episode {2}), crawling.".format(
+                    subtitle_path,
+                    season_number,
+                    episode_number
+                  ))
+                  cursor.execute(
+                    """
+                    DELETE FROM subtitles 
+                    WHERE season = %s 
+                    AND episode = %s
+                    """, (season_number, episode_number)
+                  )
+                  cursor.execute(
+                    """
+                    DELETE FROM srt 
+                    WHERE path = %s
+                    """, (subtitle_path,)
+                  )
+                  self.get_connection().commit()
+                  subtitles = Subtitles(subtitle_path)
+                  for j in range(self.concatenation_depth):
+                    for i in range(len(subtitles.subtitles) - j):
+                      start_subtitle = subtitles.subtitles[i]
+                      end_subtitle = subtitles.subtitles[i+j]
+                      text = "\n".join([
+                        subtitle.text 
+                        for subtitle 
+                        in subtitles.subtitles[i:i+j+1]
+                      ])
+                      cursor.execute(
+                        """
+                        INSERT INTO subtitles (
+                          season, 
+                          episode, 
+                          start_index, 
+                          end_index,
+                          start_time, 
+                          end_time, 
+                          subtitle
+                        ) VALUES (
+                          %s, 
+                          %s, 
+                          %s, 
+                          %s, 
+                          %s, 
+                          %s,
+                          E%s
+                        )""", (
+                          season_number, 
+                          episode_number, 
+                          i, 
+                          i + j,
+                          start_subtitle.start.total_seconds(),
+                          end_subtitle.end.total_seconds(),
+                          text
+                        )
+                      )
+                  cursor.execute(
+                    """
+                    INSERT INTO srt (
+                      path, 
+                      md5sum
+                    ) VALUES (
+                      %s, 
+                      %s
+                    )""", (subtitle_path, md5)
+                  )
+                  self.get_connection().commit()
+              except Exception as ex:
+                logger.error("Could not parse SRT file at path '{0}', reason: {1}(): {2}".format(
+                  subtitle_path,
+                  type(ex).__name__,
+                  str(ex)  
+                ))
+                logger.error(traceback.format_exc(ex))
+                cursor = self.get_connection().cursor()
+                continue
+        except Exception as ex:
+          logger.error("Could not find season number in directory '{0}', continuing.".format(season_directory))
+          cursor = self.get_connection().cursor()
+          continue
+
+class DunderDatabase(SubtitleDatabase):
+  """
+  A wrapper around the database used for the main dunder gifflin bot.
+
+  Parameters are the same as above, but also creates tables for tracking users and comments,
+  as well as a generic key-value store.
+  """
+
+  DUNDER_MIGRATION = """
+  BEGIN;
+
+  SET search_path = public, pg_catalog;
 
   CREATE TABLE IF NOT EXISTS users (
     username VARCHAR NOT NULL,
@@ -167,34 +358,12 @@ class DunderDatabase(Database):
     exp_time TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (key)
   );
-
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1
-      FROM pg_constraint
-      WHERE conname = 'comments_subtitles_fkey'
-    ) THEN
-      ALTER TABLE ONLY comments
-      ADD CONSTRAINT comments_subtitles_fkey
-      FOREIGN KEY (season, episode, start_index, end_index)
-      REFERENCES subtitles (season, episode, start_index, end_index)
-      ON DELETE RESTRICT;
-    END IF;
-  END;
-  $$ LANGUAGE plpgsql;
-
+  
   CREATE INDEX IF NOT EXISTS trigram_index ON subtitles USING GIST (subtitle gist_trgm_ops);
 
   COMMIT;
   """
-  def __init__(self, host, port, database_name, username, password, directory, concatenation_depth = 2):
-    super(DunderDatabase, self).__init__(host, port, database_name, username, password)
-    self.directory = directory
-    self.concatenation_depth = concatenation_depth
-    self._migrate()
-    self._crawl_subtitles()
-
+  
   def find_subtitles(self, text, limit = 10):
     """
     Find the closest subtitles to a line of text.
@@ -470,13 +639,13 @@ class DunderDatabase(Database):
         INSERT INTO kv_store (
           key,
           value,
-          mod_time
+          exp_time
         ) VALUES (
           %s, 
           %s, 
           %s
         )
-        """, (key, value, mod_time)
+        """, (key, value, exp_time)
       )
       self.get_connection().commit()
   
@@ -544,109 +713,8 @@ class DunderDatabase(Database):
     """
     Runs the default migration against the database. Checked on instantiation.
     """
-    logger.debug("Checking database migration.")
+    super(DunderDatabase, self)._migrate()
     cursor = self.get_connection().cursor()
-    cursor.execute(DunderDatabase.SUBTITLE_MIGRATION)
+    cursor.execute(DunderDatabase.DUNDER_MIGRATION)
     self.get_connection().commit()
     self.get_connection().close()
-
-  def _crawl_subtitles(self):
-    """
-    Crawl through the directory for subtitles and update the database accordingly. Called on instantiation.
-    """
-    cursor = self.get_connection().cursor()
-    for season in os.listdir(self.directory):
-      if season.lower().startswith("s") and os.path.isdir(os.path.join(self.directory, season)):
-        season_directory = os.path.join(self.directory, season)
-        try:
-          season_number = int(re.sub(r"\D", "", season))
-          for filename in os.listdir(season_directory):
-            if filename.endswith(".srt") and filename.lower().startswith("e"):
-              subtitle_path = os.path.join(season_directory, filename)
-              try:
-                md5 = md5sum(subtitle_path)
-                episode_number = int(re.sub(r"\D", "", filename))
-                cursor.execute("SELECT md5sum FROM srt WHERE path = %s", (subtitle_path,))
-                row = cursor.fetchone()
-                if not row or row[0] != md5:
-                  logger.info("New or changed subtitle file '{0}' found (season {1}, episode {2}), crawling.".format(
-                    subtitle_path,
-                    season_number,
-                    episode_number
-                  ))
-                  cursor.execute(
-                    """
-                    DELETE FROM subtitles 
-                    WHERE season = %s 
-                    AND episode = %s
-                    """, (season_number, episode_number)
-                  )
-                  cursor.execute(
-                    """
-                    DELETE FROM srt 
-                    WHERE path = %s
-                    """, (subtitle_path,)
-                  )
-                  self.get_connection().commit()
-                  subtitles = Subtitles(subtitle_path)
-                  for j in range(self.concatenation_depth):
-                    for i in range(len(subtitles.subtitles) - j):
-                      start_subtitle = subtitles.subtitles[i]
-                      end_subtitle = subtitles.subtitles[i+j]
-                      text = " ".join([
-                        subtitle.text 
-                        for subtitle 
-                        in subtitles.subtitles[i:i+j+1]
-                      ])
-                      cursor.execute(
-                        """
-                        INSERT INTO subtitles (
-                          season, 
-                          episode, 
-                          start_index, 
-                          end_index,
-                          start_time, 
-                          end_time, 
-                          subtitle
-                        ) VALUES (
-                          %s, 
-                          %s, 
-                          %s, 
-                          %s, 
-                          %s, 
-                          %s,
-                          %s
-                        )""", (
-                          season_number, 
-                          episode_number, 
-                          i, 
-                          i + j,
-                          start_subtitle.start.total_seconds(),
-                          end_subtitle.end.total_seconds(),
-                          text
-                        )
-                      )
-                  cursor.execute(
-                    """
-                    INSERT INTO srt (
-                      path, 
-                      md5sum
-                    ) VALUES (
-                      %s, 
-                      %s
-                    )""", (subtitle_path, md5)
-                  )
-                  self.get_connection().commit()
-              except Exception as ex:
-                logger.error("Could not parse SRT file at path '{0}', reason: {1}(): {2}".format(
-                  subtitle_path,
-                  type(ex).__name__,
-                  str(ex)  
-                ))
-                logger.error(traceback.format_exc(ex))
-                cursor = self.get_connection().cursor()
-                continue
-        except Exception as ex:
-          logger.error("Could not find season number in directory '{0}', continuing.".format(season_directory))
-          cursor = self.get_connection().cursor()
-          continue
