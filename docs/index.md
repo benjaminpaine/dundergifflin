@@ -128,11 +128,9 @@ AUTOSTART=/path/to/my/file
 # Optional. Autostart this script when the monitor starts. Can also pass in multiple AUTOSTART= keys to launch more than one.
 ```
 
-
-
 # Examples
 
-See [../impl/office.py](the main dundergifflin bot's) implementation for an example.
+See [the main dundergifflin bot's](../impl/office.py) implementation for an example.
 
 # Contributing
 Please read CONTRIBUTING.md for details on our code of conduct, and the process for submitting pull requests to us.
