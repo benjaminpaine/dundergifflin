@@ -17,7 +17,7 @@ from dundergifflin.util import process_is_alive
 from dundergifflin.config import Configuration
 
 def import_bot(bot_path):
-  '''
+  """
   Imports a module using its path.
 
   Will (hopefully) obscure import methods for python 2/3.
@@ -31,7 +31,7 @@ def import_bot(bot_path):
   -------
   module
     The imported module.
-  '''
+  """
   module_name = os.path.splitext(os.path.basename(bot_path))[0]
   try:
     import importlib.util
@@ -50,9 +50,9 @@ def import_bot(bot_path):
       return bot
 
 class MonitorConfiguration(Configuration):
-  '''
+  """
   A metaclass for the monitor configuration that checks for required configuration keys.
-  '''
+  """
   REQUIRED_KEYS = [
     "PIDFILE",
     "LISTENER_HOST",
@@ -65,7 +65,7 @@ class MonitorConfiguration(Configuration):
         raise KeyError("Required key '{0}' not found in configuration.".format(key))
 
 class BotMonitor(multiprocessing.Process):
-  '''
+  """
   A monitoring process to run bots.
 
   A .pid file exists that should be used to ensure only one monitoring process runs.
@@ -77,7 +77,7 @@ class BotMonitor(multiprocessing.Process):
   ----------
   directory : string
     The location to store the .pid and .cfg files.
-  '''
+  """
 
   def __init__(self, configuration_file = os.path.join(os.path.expanduser("~"), "dundergifflin.cfg")):
     super(BotMonitor, self).__init__()
@@ -116,6 +116,8 @@ class BotMonitor(multiprocessing.Process):
             handler = logging.StreamHandler()
         else:
           raise ValueError("Unknown handler type '{0}'.".format(log_handler))
+        if hasattr(self.configuration, "LOG_LEVEL"):
+          self.logger.setLevel(self.configuration.LOG_LEVEL)
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
       except Exception as ex:
@@ -126,16 +128,16 @@ class BotMonitor(multiprocessing.Process):
       sys.stderr.flush()
 
   def shutdown(self, *args):
-    '''
+    """
     Triggers the process monitor to exit its loop.
-    '''
+    """
     self.logger.info("Shutting down process monitor.")
     self.stopped = True
 
   def kill(self, *args):
-    '''
+    """
     Shuts down the monitor and all bots.
-    '''
+    """
     self.logger.info("Shutting down process monitor.")
     self.stopped = True
     self.killed = True
@@ -157,9 +159,9 @@ class BotMonitor(multiprocessing.Process):
     self.logger.info("Process monitor stopped.")
 
   def check(self, *args):
-    '''
+    """
     Runs each bots' "check" function.
-    '''
+    """
     if not self.stopped:
       for bot in self.bots:
         bot.check()
@@ -174,7 +176,7 @@ class BotMonitor(multiprocessing.Process):
         self.listener.start()
 
   def find_named_bot(self, bot_name):
-    '''
+    """
     Find a bot by name.
     
     Parameters
@@ -185,20 +187,20 @@ class BotMonitor(multiprocessing.Process):
     Returns
     -------
     BotMonitor.Bot
-    '''
+    """
     if not any([bot.name == bot_name for bot in self.bots]):
       return None
     return [bot for bot in self.bots if bot.name == bot_name][0]
 
   def bot_status(self):
-    '''
+    """
     Get the status of all bots and their peg counts.
 
     Returns
     -------
     string
       The status of the monitor, all bots, and their peg counts.
-    '''
+    """
     return "\n".join([
       str([
         bot.name,
@@ -209,7 +211,7 @@ class BotMonitor(multiprocessing.Process):
     ])
 
   def start_bot(self, bot_path = None):
-    '''
+    """
     Start a bot if it doesn't exist. If it exists and is stopped, restart it.
 
     Parameters
@@ -221,7 +223,7 @@ class BotMonitor(multiprocessing.Process):
     -------
     string
       The status of the command.
-    '''
+    """
     if bot_path is None:
       return "No path received."
     self.logger.debug("Received request to start bot at path {0}.".format(bot_path))
@@ -239,7 +241,7 @@ class BotMonitor(multiprocessing.Process):
     return "Bot '{0}' started.".format(bot_name)
 
   def stop_bot(self, bot_path = None):
-    '''
+    """
     Stop a bot, but keep it to be restarted later.
 
     Parameters
@@ -251,7 +253,7 @@ class BotMonitor(multiprocessing.Process):
     -------
     string
       The status of the command.
-    '''
+    """
     if bot_path is None:
       return "No path received."
     bot_name = os.path.splitext(os.path.basename(bot_path))[0]
@@ -264,7 +266,7 @@ class BotMonitor(multiprocessing.Process):
     return "Bot '{0}' stopped.".format(bot_name)
 
   def destroy_bot(self, bot_path = None):
-    '''
+    """
     Stop a bot and remove it from the monitor.
 
     Parameters
@@ -276,7 +278,7 @@ class BotMonitor(multiprocessing.Process):
     -------
     string
       The status of the command.
-    '''
+    """
     if bot_path is None:
       return "No path received."
     bot_name = os.path.splitext(os.path.basename(bot_path))[0]
@@ -291,7 +293,7 @@ class BotMonitor(multiprocessing.Process):
     return "Bot '{0}' destroyed.".format(bot_name)
   
   def restart_bot(self, bot_path = None):
-    '''
+    """
     Restart a bot by path.
 
     Parameters
@@ -303,7 +305,7 @@ class BotMonitor(multiprocessing.Process):
     -------
     string
       The status of the command.
-    '''
+    """
     if bot_path is None:
       return "No path received."
     bot_name = os.path.splitext(os.path.basename(bot_path))[0]
@@ -314,14 +316,14 @@ class BotMonitor(multiprocessing.Process):
     return "Bot '{0}' restarted.".format(bot_name)
 
   def dispatch_command(self, *command):
-    '''
+    """
     Receive a command from the request listener, and attempt to dispatch it.
 
     Parameters
     ----------
     *command : *string
       The command, followed by arguments.
-    '''
+    """
     if not command:
       return "No command received."
     command, args = command[0], command[1:]
@@ -333,12 +335,12 @@ class BotMonitor(multiprocessing.Process):
       self.pipe.send("Exception: {0}(): {1}".format(type(ex).__name__, str(ex)))
 
   def run(self):
-    '''
+    """
     The process to run. Will fork from the shell when creating.
 
     Traps SIGINT and SIGTERM to shutdown gracefully.
     Traps SIGHUP to force a configuration reload.
-    '''
+    """
     self.logger.info("Launching bot monitor.")
     if os.fork() != 0:
       self.logger.info("Bot monitor launched, exiting parent process.")
@@ -354,6 +356,18 @@ class BotMonitor(multiprocessing.Process):
     self.listener.start()
 
     open(self.configuration.PIDFILE, "w").write(str(os.getpid()))
+    
+    try:
+      if hasattr(self.configuration, "AUTOSTART"):
+        autostart_scripts = self.configuration.AUTOSTART
+        if not isinstance(autostart_scripts, list):
+          autostart_scripts = [autostart_scripts]
+        for autostart_script in autostart_scripts:
+          self.logger.info("Autostarting bot at {0}".format(autostart_script))
+          self.start_bot(autostart_script)
+    except:
+      self.logger.error("Received exception when running autostart scripts: {0}() {1}".format(type(ex).__name__, str(ex)))
+      pass
 
     while not self.stopped:
       self.check()
@@ -379,7 +393,7 @@ class BotMonitor(multiprocessing.Process):
       "status": "bot_status",
       "shutdown": "shutdown"
     }
-    '''
+    """
     A thread that opens a socket for reading and writing to the monitor.
 
     Parameters
@@ -390,7 +404,7 @@ class BotMonitor(multiprocessing.Process):
       The host to listen on.
     port : int
       The port to listen on.
-    '''
+    """
     def __init__(self, logger, host, port, pipe):
       super(BotMonitor.RequestListener, self).__init__()
       self.logger = logger
@@ -400,13 +414,13 @@ class BotMonitor(multiprocessing.Process):
       self.stopped = False
 
     def stop(self):
-      '''
+      """
       Triggers the listener to stop itself.
-      '''
+      """
       self.stopped = True
 
     def dispatch_request(self, op, *args):
-      '''
+      """
       Based upon the operation and arguments, perform an action.
 
       Parameters
@@ -421,7 +435,7 @@ class BotMonitor(multiprocessing.Process):
       -------
       string
         A response to send to the requestor.
-      '''
+      """
 
       if op in BotMonitor.RequestListener.OPERATIONS:
         try:
@@ -450,9 +464,9 @@ class BotMonitor(multiprocessing.Process):
       return "Unknown operation '{0}'.".format(op)
   
     def run(self):
-      '''
+      """
       The main "run" function that loops indefinitely.
-      '''
+      """
       self.logger.info("Launching bot monitor request listener.")
       self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
       self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -485,19 +499,19 @@ class BotMonitor(multiprocessing.Process):
           break
 
   class EventSink(object):
-    '''
+    """
     A "sink" class that tracks events and their timings.
 
     Passed into the bots "main" function when executing, so the bot
     can report back occurrences.
-    '''
+    """
     def __init__(self):
       self.events = {}
 
     def _clean_events(self):
-      '''
+      """
       Removes stale events.
-      '''
+      """
       for key in self.events:
         self.events[key]["event_times"] = [
           time for time in self.events[key]["event_times"] 
@@ -505,14 +519,14 @@ class BotMonitor(multiprocessing.Process):
         ]
 
     def add_event(self, event_name):
-      '''
+      """
       Add an event to the sink.
 
       Parameters
       ----------
       event_name : string
         The name of the event.
-      '''
+      """
       self._clean_events()
       if event_name not in self.events:
         self.events[event_name] = {
@@ -523,7 +537,7 @@ class BotMonitor(multiprocessing.Process):
       self.events[event_name]["event_times"].append(datetime.datetime.now())
 
     def get_events(self):
-      '''
+      """
       Gets the events that have occurred in this sink.
 
       Returns
@@ -535,13 +549,13 @@ class BotMonitor(multiprocessing.Process):
           The total number of this event.
         past_hour : int
           The total number of events over the past hour.
-      '''
+      """
       self._clean_events()
       for key in self.events:
         yield key, self.events[key]["event_count"], len(self.events[key]["event_times"])
 
   class BotProcess(multiprocessing.Process):
-    '''
+    """
     A process ran by the monitor.
 
     Parameters
@@ -552,7 +566,7 @@ class BotMonitor(multiprocessing.Process):
       An event sink to pass into the main() function.
     self.logger : logging.Logger
       A self.logger to send to the main() function for use by the bot.
-    '''
+    """
     def __init__(self, bot_path, conn, bot_logger):
       super(BotMonitor.BotProcess, self).__init__()
       self.conn = conn
@@ -567,7 +581,7 @@ class BotMonitor(multiprocessing.Process):
       self.bot.main(self.conn, self.logger)
 
   class Bot(object):
-    '''
+    """
     A holder class for a bot.
 
     Parameters
@@ -578,7 +592,7 @@ class BotMonitor(multiprocessing.Process):
       The path to a .py file to run as a bot.
     self.logger : logging.Logger
       A self.logger to send to the main() function for use by the bot.
-    '''
+    """
     def __init__(self, name, bot_path, bot_logger):
       self.name = name
       self.bot_path = bot_path
@@ -589,17 +603,17 @@ class BotMonitor(multiprocessing.Process):
       self.process = BotMonitor.BotProcess(self.bot_path, self.child_conn, self.logger)
 
     def start(self):
-      '''
+      """
       Starts the bot.
-      '''
+      """
       self.stopped = False
       self.logger.info("Starting named bot '{0}'".format(self.name))
       self.process.start()
 
     def stop(self):
-      '''
+      """
       Terminates a bot.
-      '''
+      """
       self.stopped = True
       self.logger.info("Stopping named bot '{0}'".format(self.name))
       pid = self.process.pid
@@ -611,24 +625,24 @@ class BotMonitor(multiprocessing.Process):
         pass
 
     def restart(self):
-      '''
+      """
       Restart a bot.
-      '''
+      """
       if self.status():
         self.stop()
       self.process = BotMonitor.BotProcess(self.bot_path, self.child_conn, self.logger)
       self.start()
 
     def status(self):
-      '''
+      """
       Return the status of the bot process.
-      '''
+      """
       return self.process.is_alive()
 
     def check(self):
-      '''
+      """
       Checks the health of a process, and restarts if necessary.
-      '''
+      """
       if not self.stopped and self.status():
         if self.conn.poll():
           self.logger.debug("Reading events on bot {0}".format(self.name))

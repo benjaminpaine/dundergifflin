@@ -94,7 +94,9 @@ I'm a bot that parses comments for quotes from The Office. I found your comment 
 
 + I only reply to comments that are >={9:d}% like a quote I found. Want to invoke me to find the closest I can? Start your comment with !{10:s}.
 
-+ Want to make a quote bot for your favorite show? [Check out my source code.](https://benjaminpaine.github.io/dundergifflin/). Have suggestions or want me to visit your subreddit? Post in /r/dundergifflin!""".format(
++ Want to make a quote bot for your favorite show? [Check out my source code.](https://benjaminpaine.github.io/dundergifflin/). 
+
++ Have suggestions or want me to visit your subreddit? Post in /r/dundergifflin!""".format(
     text,
     url,
     season,
@@ -258,7 +260,7 @@ def main(conn = None, logger = None):
                 " /u/{0}".format(author.name) if author is not None else ""
               )
           except Exception as ex:
-            logger.error("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
+            alerter.sent("Receieved an exception when posting a comment.\n\n{0}(): {1}\n\n{2}".format(
               type(ex).__name__,
               str(ex),
               traceback.format_exc(ex)
@@ -315,13 +317,13 @@ def main(conn = None, logger = None):
             time.sleep(60)
 
   except Exception as ex:
-    logger.error("Receieved an exception during normal operation.\n\n{0}(): {1}\n\n{2}".format(
+    alerter.send("Receieved an exception during normal operation.\n\n{0}(): {1}\n\n{2}".format(
       type(ex).__name__,
       str(ex),
       traceback.format_exc(ex)
     ))
   else:
-    logger.error("Reddit bot has stopped!")
+    alerter.send("Reddit bot has stopped!")
 
 if __name__ == "__main__":
   main()
