@@ -3,7 +3,7 @@
 - [dundergifflin](dundergifflin.md)
 - [dundergifflin.util](dundergifflin.util.md)
 - [dundergifflin.database](dundergifflin.database.md)
-- [dundergifflin.imgur](dundergifflin.imgure.md)
+- [dundergifflin.imgur](dundergifflin.imgur.md)
 - [dundergifflin.reddit](dundergifflin.reddit.md)
 - [dundergifflin.ffmpeg](dundergifflin.ffmpeg.md)
 - [dundergifflin.srt](dundergifflin.srt.md)

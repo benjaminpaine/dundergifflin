@@ -163,7 +163,7 @@ class SubtitleConverter(Converter):
     self.add_output_flag("-t", (end-start).total_seconds())
     self.add_filter(scale = "{0}:-1".format(image_width))
 
-    text_size = int(text_size_max-len(text)/5)
+    text_size = int(text_size_max-len(text)/10)
 
     for line_offset, text_line in enumerate(reversed(text.splitlines())):
       _text_offset = int(text_offset) + (line_offset * text_size)

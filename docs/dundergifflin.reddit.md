@@ -201,6 +201,78 @@ CrawlerMonitor
     stopped(self)
         Internal. Whether or not the monitor thread has stopped.
 
+MentionCrawler 
+    A process that will crawl through a users' metnions.
+
+    Parameters
+    ----------
+    reddit : praw.reddit
+      The reddit instance
+    mention_function : function(praw.Comment)
+      The function to call on a mention that hasn't already been viewed.
+
+    Ancestors (in MRO)
+    ------------------
+    dundergifflin.reddit.MentionCrawler
+    multiprocessing.process.Process
+    __builtin__.object
+
+    Class variables
+    ---------------
+    EVALUATION_INTERVAL
+
+    Instance variables
+    ------------------
+    authkey
+
+    daemon
+        Return whether process is a daemon
+
+    exitcode
+        Return exit code of process or `None` if it has yet to stop
+
+    ident
+        Return identifier (PID) of process or `None` if it has yet to start
+
+    ignored_subreddits
+
+    mention_function
+
+    name
+
+    pid
+        Return identifier (PID) of process or `None` if it has yet to start
+
+    reddit
+
+    stopped
+
+    user
+
+    vote_function
+
+    Methods
+    -------
+    __init__(self, reddit, vote_function, mention_function, ignored_subreddits=[])
+
+    is_alive(self)
+        Return whether process is alive
+
+    join(self, timeout=None)
+        Wait until child process terminates
+
+    run(self)
+        The processes "run" function.
+
+    start(self)
+        Start child process
+
+    stop(self)
+        Marks the crawler as stopped.
+
+    terminate(self)
+        Terminate process; sends SIGTERM signal or uses TerminateProcess()
+
 RedditCrawler 
     The reddit crawler that a user should instantiate.
 
@@ -238,11 +310,15 @@ RedditCrawler
 
     comment_function
 
+    crawled_subreddits
+
+    ignored_subreddits
+
+    mention_function
+
     password
 
     reply_function
-
-    subreddits
 
     user_agent
 
@@ -252,7 +328,7 @@ RedditCrawler
 
     Methods
     -------
-    __init__(self, client_id, client_secret, username, password, user_agent, comment_function, vote_function, reply_function, *subreddits)
+    __init__(self, client_id, client_secret, username, password, user_agent, comment_function, vote_function, reply_function, mention_function, crawled_subreddits=[], ignored_subreddits=[])
 
 VoteCrawler 
     A process that will periodically get the bots' comments.
@@ -297,6 +373,8 @@ VoteCrawler
 
     reddit
 
+    stopped
+
     vote_function
 
     Methods
@@ -315,6 +393,9 @@ VoteCrawler
 
     start(self)
         Start child process
+
+    stop(self)
+        Marks the crawler as stopped.
 
     terminate(self)
         Terminate process; sends SIGTERM signal or uses TerminateProcess()

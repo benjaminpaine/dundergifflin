@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals, print_function
+
 import sys
 import os
 import itertools
@@ -9,6 +10,8 @@ import time
 import traceback
 import dundergifflin
 import logging
+import six
+import random
 
 from dundergifflin.ffmpeg import SubtitleConverter
 from dundergifflin.config import Configuration
@@ -29,7 +32,7 @@ if not os.path.isdir(configuration_directory):
   sys.stderr.flush()
   sys.exit(5)
 
-configuration_file = os.path.join(configuration_directory, "office_test_config")
+configuration_file = os.path.join(configuration_directory, "office_config")
 if not os.path.exists(configuration_file):
   sys.stderr.write("Configuration file does not exist at {0}, exiting.\n".format(configuration_file))
   sys.stderr.flush()
@@ -70,7 +73,8 @@ class OfficeConfiguration(Configuration):
     "REDDIT_CLIENT_ID",
     "REDDIT_CLIENT_SECRET",
     "REDDIT_USER_AGENT",
-    "REDDIT_SUBREDDITS",
+    "REDDIT_CRAWLED_SUBREDDITS",
+    "REDDIT_IGNORED_SUBREDDITS",
     "REDDIT_MINIMUM_LIKENESS"
   ]
   def __init__(self, configuration_file):
@@ -81,36 +85,23 @@ class OfficeConfiguration(Configuration):
     
 configuration = OfficeConfiguration(configuration_file)
 
-def format_comment(url, text, season, episode, start_index, end_index, comment_count, comment_score, uses, likeness, minimum_likeness, username):
+def format_comment(url, text, season, episode, start_index, end_index, comment_count, comment_score, uses, likeness, episode_title):
   return """>[{0:s}]({1:s})
 
->Season {2:02d}, Episode {3:02d}, Line{4:s}
+>Season {2:02d}, Episode {3:02d}, Line{4:s}{5:s}
 
-I'm a bot that parses comments for quotes from The Office. I found your comment to contain a quote {5:d}% like this. This quote has been mentioned {6:d} times{7:s}.{8:s}
+I found your comment to be {6:d}% like this. This quote has been mentioned {7:d} times{8:s}.
 
-+ Want me to ignore your comments from now on? Reply **ignore me** to this comment. Have I ignored you accidentally? Shoot me a PM.
-
-+ Should I ignore this quote from now on? Did I make a mistake? Sorry, I'm still working out my bugs! Simply **downvote this comment**.
-
-+ I only reply to comments that are >={9:d}% like a quote I found. Want to invoke me to find the closest I can? Start your comment with !{10:s}.
-
-+ Want to make a quote bot for your favorite show? [Check out my source code.](https://benjaminpaine.github.io/dundergifflin/). 
-
-+ Have suggestions or want me to visit your subreddit? Post in /r/dundergifflin!""".format(
+^([Source](https://benjaminpaine.github.io/dundergifflin/) | [Discuss](/r/dundergifflin))""".format(
     text,
     url,
     season,
     episode,
     " {0:d}".format(start_index+1) if start_index == end_index else "s {0:d}-{1:d}".format(start_index+1, end_index+1),
+    ", \"{0}\"".format(episode_title) if episode_title else "",
     int(likeness*100),
     comment_count,
-    ", and has an average score of {0:.2f}".format(comment_score) if comment_score is not None else "",
-    " You've used me {0} time{1}!".format(
-      uses,
-      "s" if uses > 1 else ""
-    ) if uses is not None and uses != 0 else "",
-    int(minimum_likeness*100),
-    username
+    ", and has an average score of {0:.2f}".format(comment_score) if comment_score is not None else ""
   )
 
 def main(conn = None, logger = None):
@@ -148,22 +139,23 @@ def main(conn = None, logger = None):
 
         database.upsert_key("imgur_refresh_token", imgur.refresh_token)
 
-        def find_filter_subtitles(check_text, minimum_likeness = 0.8):
+        def find_filter_subtitles(check_text, minimum_likeness = 0.2):
+          if len(check_text) < configuration.REDDIT_MINIMUM_LENGTH:
+            return []
           logger.info("Checking for text '{0}'".format(check_text))
           found_subtitles = database.find_subtitles(check_text)
           for match in body_search_regex.findall(check_text):
-            logger.info("Checking for text '{0}'".format(match))
-            found_subtitles.extend(database.find_subtitles(match))
+            if len(match) > configuration.REDDIT_MINIMUM_LENGTH:
+              logger.info("Checking for text '{0}'".format(match))
+              found_subtitles.extend(database.find_subtitles(match))
           arr = [
             found_subtitle
             for found_subtitle in found_subtitles
             if found_subtitle[7] >= minimum_likeness
             and (found_subtitle[9] is None or found_subtitle[9] > configuration.REDDIT_IGNORE_THRESHOLD)
           ]
-          logger.info("Sorting array {0}".format(arr))
           arr.sort(key = lambda f: f[7])
           arr.reverse()
-          logger.info("Returning array {0}".format(arr))
           return arr
 
         def convert_upload(comment, season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score):
@@ -188,40 +180,41 @@ def main(conn = None, logger = None):
 
           return url
 
-
         def comment_function(comment):
           if conn is not None:
             conn.send("comment_evaluated")
 
+        def mention_function(comment):
+          if conn is not None:
+            conn.send("mention_evaluated")
+
           try:
-            body = comment.body.strip()
+            body = re.sub("/u/{0}".format(configuration.REDDIT_USERNAME), "", comment.body, flags = re.IGNORECASE).strip()
             author = comment.author
             if author is not None:
               if database.get_user_ignored(author.name):
                 logger.info("Ignoring post from user '{0}'.".format(author.name))
                 return
-            force = body.startswith("!{0}".format(configuration.REDDIT_USERNAME)) or body.startswith("!{0}".format(configuration.REDDIT_USERNAME.replace("_","\\_")))
-
-            if force:
-              body = body[len(configuration.REDDIT_USERNAME.replace("_", "\\_"))+1:].strip()
 
             if len(body) < configuration.REDDIT_MINIMUM_LENGTH:
               logger.info("Ignoring text body '{0}': too short.".format(body))
-              if force:
-                return "Sorry{0}, that message is a bit too short. I try to avoid short phrases as they're overly common in subtitles.".format(
-                  " /u/{0}".format(author.name) if author is not None else ""
-                )
-              return
+              return "Sorry{0}, that message is a bit too short. I try to avoid short phrases as they're overly common in subtitles.".format(
+                " /u/{0}".format(author.name) if author is not None else ""
+              )
 
-            subtitles = find_filter_subtitles(body, 0.0 if force else configuration.REDDIT_MINIMUM_LIKENESS)
+            subtitles = find_filter_subtitles(body, 0.1)
+
             if not subtitles:
-              if force:
-                return "Sorry{0}, I couldn't find any quotes with that phrase.".format(
-                  " /u/{0}".format(author.name) if author is not None else ""
-                )
+              return "Sorry{0}, I couldn't find any quotes with that phrase.".format(
+                " /u/{0}".format(author.name) if author is not None else ""
+              )
             else:
-              season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score = subtitles[0]
-              text = text.decode("utf-8")
+              maximum_likeness = subtitles[0][7]
+              random_chosen_subtitle = random.choice([subtitle for subtitle in subtitles if subtitle[7] == maximum_likeness])
+              season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score, episode_title = random_chosen_subtitle
+
+              text = text.decode("UTF-8")
+
               logger.info("Found subtitle S{0:02d}E{1:02d} \"{2:s}\", uploading.".format(season, episode, text))
 
               url = convert_upload(comment, season, episode, start_index, end_index, start_time, end_time, text, likeness, comment_count, comment_score)
@@ -247,8 +240,7 @@ def main(conn = None, logger = None):
                 comment_score,
                 uses,
                 likeness,
-                configuration.REDDIT_MINIMUM_LIKENESS, 
-                configuration.REDDIT_USERNAME
+                episode_title
               )
 
           except Exception as ex:
@@ -303,8 +295,11 @@ def main(conn = None, logger = None):
           comment_function,
           vote_function,
           reply_function,
-          *configuration.REDDIT_SUBREDDITS.split(",")
+          mention_function,
+          [subreddit for subreddit in configuration.REDDIT_CRAWLED_SUBREDDITS.split(",") if subreddit],
+          [subreddit for subreddit in configuration.REDDIT_IGNORED_SUBREDDITS.split(",") if subreddit]
         ) as crawler:
+
           while True:
             time.sleep(60)
 

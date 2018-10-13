@@ -8,6 +8,68 @@ import time
 import traceback
 import multiprocessing
 
+class MentionCrawler(multiprocessing.Process):
+  """
+  A process that will crawl through a users' metnions.
+
+  Parameters
+  ----------
+  reddit : praw.reddit
+    The reddit instance
+  mention_function : function(praw.Comment)
+    The function to call on a mention that hasn't already been viewed.
+  """
+  EVALUATION_INTERVAL = 30
+  def __init__(self, reddit, vote_function, mention_function, ignored_subreddits = []):
+    super(MentionCrawler, self).__init__()
+    logger.debug("Creating mention crawler process.")
+    self.reddit = reddit
+    self.mention_function = mention_function
+    self.vote_function = vote_function
+    self.ignored_subreddits = [subreddit_name.lower() for subreddit_name in ignored_subreddits]
+    self.user = self.reddit.user.me()
+    self.stopped = False
+
+  def stop(self):
+    """
+    Marks the crawler as stopped.
+    """
+    self.stopped = True
+
+  def run(self):
+    """
+    The processes "run" function.
+    """
+    while not self.stopped:
+      for mention in self.reddit.inbox.mentions(limit = None):
+        logger.debug("Parsing mention ID {0} on subreddit '{1}'.".format(mention, mention.subreddit.display_name.lower()))
+        replied = False
+        try:
+          if mention.subreddit.display_name.lower() in self.ignored_subreddits:
+            logger.debug("Ignoring mention in subreddit '{0}'.".format(mention.subreddit))
+            continue
+          mention.refresh()
+          for reply in mention.replies:
+            if reply.author is not None and reply.author.name == self.user.name:
+              logger.debug("Already replied to mention ID '{0}', ignoring.".format(mention))
+              replied = True
+              self.vote_function(reply)
+          if replied:
+            continue
+          reply = self.mention_function(mention)
+          if reply:
+            logger.info("Replying to mention ID '{0}'.".format(mention))
+            mention.reply(reply)
+        except Exception as ex:
+          logger.error("Caught exception handling mention ID '{0}'.\n{1}(): {2}\n{3}".format(
+            mention,
+            type(ex).__name__,
+            str(ex),
+            traceback.format_exc(ex)
+          ))
+          continue
+      time.sleep(MentionCrawler.EVALUATION_INTERVAL)
+
 class CommentCrawler(multiprocessing.Process):
   """
   A process that will crawl through comments on a given subreddit.
@@ -97,6 +159,13 @@ class VoteCrawler(multiprocessing.Process):
     logger.debug("Creating vote crawler process.")
     self.reddit = reddit
     self.vote_function = vote_function
+    self.stopped = False
+
+  def stop(self):
+    """
+    Marks the crawler as stopped.
+    """
+    self.stopped = True
 
   def run(self):
     """
@@ -104,10 +173,11 @@ class VoteCrawler(multiprocessing.Process):
     then calls the supplied vote_function on them.
     """
     logger.info("Vote crawler processing executing.")
-    for comment in self.reddit.user.me().comments.new(limit = None):
-      logger.debug("Evaluating own comment ID '{0}'.".format(comment))
-      self.vote_function(comment)
-    time.sleep(VoteCrawler.EVALUATION_INTERVAL)
+    while not self.stopped:
+      for comment in self.reddit.user.me().comments.new(limit = None):
+        logger.debug("Evaluating own comment ID '{0}'.".format(comment))
+        self.vote_function(comment)
+      time.sleep(VoteCrawler.EVALUATION_INTERVAL)
 
 class CrawlerMonitor(threading.Thread):
   """
@@ -151,6 +221,10 @@ class CrawlerMonitor(threading.Thread):
         logger.error("Vote crawler on client ID '{0}' stopped, restarting.".format(self.crawler.client_id))
         self.crawler.vote_crawler = VoteCrawler(self.crawler.reddit, self.crawler.vote_function)
         self.crawler.vote_crawler.start()
+      if not self.crawler.mention_crawler.is_alive():
+        logger.error("Mention crawler on client ID '{0}' stopped, restarting.".format(self.crawler.client_id))
+        self.crawler.mention_crawler = MentionCrawler(self.crawler.reddit, self.crawler.vote_function, self.crawler.mention_function, self.crawler.ignored_subreddits)
+        self.crawler.mention_crawler.start()
       for i, (subreddit_name, process) in enumerate(self.crawler.comment_crawlers):
         if not process.is_alive():
           logger.error("Comment crawler for subreddit '{0} on client ID '{1}' stopped, restarting.".format(subreddit_name, self.crawler.client_id))
@@ -184,8 +258,8 @@ class RedditCrawler(object):
   subreddits : *list
     All of the subreddits to monitor.
   """
-  def __init__(self, client_id, client_secret, username, password, user_agent, comment_function, vote_function, reply_function, *subreddits):
-    logger.debug("Creating reddit crawler for client ID '{0}'.".format(client_id))
+  def __init__(self, client_id, client_secret, username, password, user_agent, comment_function, vote_function, reply_function, mention_function, crawled_subreddits = [], ignored_subreddits = []):
+    logger.debug("Creating reddit crawler for client ID '{0}'. Will crawl subreddits {1}, and ignore subreddits {2}".format(client_id, crawled_subreddits, ignored_subreddits))
     self.username = username
     self.password = password
     self.client_id = client_id
@@ -194,10 +268,14 @@ class RedditCrawler(object):
     self.comment_function = comment_function
     self.vote_function = vote_function
     self.reply_function = reply_function
-    self.subreddits = list(subreddits)
+    self.mention_function = mention_function
+
+    self.crawled_subreddits = crawled_subreddits
+    self.ignored_subreddits = ignored_subreddits
 
   def __enter__(self):
     logger.debug("Creating praw instance for client ID '{0}'.".format(self.client_id))
+
     self.reddit = praw.Reddit(
       client_id = self.client_id,
       client_secret = self.client_secret,
@@ -205,16 +283,24 @@ class RedditCrawler(object):
       password = self.password,
       user_agent = self.user_agent
     )
+
     self.comment_crawlers = [
       (subreddit, CommentCrawler(self.reddit, subreddit, self.comment_function, self.reply_function, self.vote_function))
-      for subreddit in self.subreddits
+      for subreddit in self.crawled_subreddits
     ]
+
     for subreddit_name, process in self.comment_crawlers:
       process.start()
+
     self.vote_crawler = VoteCrawler(self.reddit, self.vote_function)
     self.vote_crawler.start()
+
+    self.mention_crawler = MentionCrawler(self.reddit, self.vote_function, self.mention_function, self.ignored_subreddits)
+    self.mention_crawler.start()
+
     self.monitor = CrawlerMonitor(self)
     self.monitor.start()
+
     logger.debug("Monitor started for client ID '{0}'".format(self.client_id))
     return self
 
@@ -231,9 +317,22 @@ class RedditCrawler(object):
       ))
       pass
     try:
+      self.vote_crawler.stop()
       self.vote_crawler.terminate()
     except Exception as ex:
       logger.error("Caught exception when closing vote crawler process for '{0}' on client ID '{1}':\n{2}(): {3}\n{4}".format(
+        subreddit_name,
+        self.client_id,
+        type(ex).__name__,
+        str(ex),
+        traceback.format_exc(ex)
+      ))
+      pass
+    try:
+      self.mention_crawler.stop()
+      self.mention_crawler.terminate()
+    except Exception as ex:
+      logger.error("Caught exception when closing mention crawler process for '{0}' on client ID '{1}':\n{2}(): {3}\n{4}".format(
         subreddit_name,
         self.client_id,
         type(ex).__name__,

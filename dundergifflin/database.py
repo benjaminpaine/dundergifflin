@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals, print_function
+import csv
 import psycopg2
 import re
 import os
@@ -358,11 +359,22 @@ class DunderDatabase(SubtitleDatabase):
     exp_time TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (key)
   );
+
+  CREATE TABLE IF NOT EXISTS episodes (
+    season SMALLINT NOT NULL,
+    episode SMALLINT NOT NULL,
+    title VARCHAR NOT NULL,
+    PRIMARY KEY (season, episode)
+  );
   
   CREATE INDEX IF NOT EXISTS trigram_index ON subtitles USING GIST (subtitle gist_trgm_ops);
 
   COMMIT;
   """
+  
+  def __init__(self, host, port, database_name, username, password, directory, concatenation_depth = 2):
+    super(DunderDatabase, self).__init__(host, port, database_name, username, password, directory, concatenation_depth)
+    self._crawl_titles()
   
   def find_subtitles(self, text, limit = 10):
     """
@@ -401,6 +413,8 @@ class DunderDatabase(SubtitleDatabase):
         The number of times this/these line(s) has/have been referenced.
       comment_score : float
         The average comment score of this/these line(s).
+      title : string
+        The episode title, if found.
     
     """
     cursor = self.get_connection().cursor()
@@ -415,13 +429,17 @@ class DunderDatabase(SubtitleDatabase):
              subtitles.subtitle,
              (1 - (subtitles.subtitle <-> %s)) AS likeness,
              COUNT(comments.comment_id) AS comment_count,
-             AVG(comments.score) AS comment_score
+             AVG(comments.score) AS comment_score,
+             episodes.title
       FROM subtitles
       LEFT OUTER JOIN comments
       ON comments.season = subtitles.season
       AND comments.episode = subtitles.episode
       AND comments.start_index = subtitles.start_index
       AND comments.end_index = subtitles.end_index
+      LEFT OUTER JOIN episodes
+      ON episodes.season = subtitles.season
+      AND episodes.episode = subtitles.episode
       WHERE subtitles.subtitle %% %s 
       GROUP BY subtitles.season, 
                subtitles.episode, 
@@ -429,7 +447,8 @@ class DunderDatabase(SubtitleDatabase):
                subtitles.end_index, 
                subtitles.start_time, 
                subtitles.end_time, 
-               subtitles.subtitle
+               subtitles.subtitle,
+               episodes.title
       ORDER BY subtitles.subtitle <-> %s ASC
       LIMIT {0}
       """.format(limit), (text, text, text)
@@ -708,6 +727,51 @@ class DunderDatabase(SubtitleDatabase):
         """, (comment_id, season, episode, start_index, end_index, score)
       )
       self.get_connection().commit()
+
+  def _crawl_titles(self):
+    """
+    Searches for titles in "episodes.csv".
+    """
+    connection = self.get_connection()
+    cursor = connection.cursor()
+    if os.path.exists(os.path.join(self.directory, "episodes.csv")):
+      with open(os.path.join(self.directory, "episodes.csv",), "r") as episodes:
+        reader = csv.reader(episodes)
+        for season, episode, title in reader:
+          cursor.execute(
+            """
+            SELECT EXISTS (
+              SELECT 1
+              FROM episodes
+              WHERE season = %s
+              AND episode = %s
+            )
+            """, (season, episode)
+          )
+          if cursor.fetchone()[0]:
+            cursor.execute(
+              """
+              UPDATE episodes
+              SET title = %s
+              WHERE season = %s
+              AND episode = %s
+              """, (title, season, episode)
+            )
+          else:
+            cursor.execute(
+              """
+              INSERT INTO episodes (
+                title,
+                season,
+                episode
+              ) VALUES (
+                %s,
+                %s,
+                %s
+              )
+              """, (title, season, episode)
+            )
+      connection.commit()
 
   def _migrate(self):
     """
